@@ -1,9 +1,6 @@
 import pandas as pd
-import boto3
 from opensearchpy import OpenSearch, RequestsHttpConnection
-import json
 from typing import List, Dict
-import base64
 from sentence_transformers import SentenceTransformer
 import os
 from dotenv import load_dotenv
@@ -19,8 +16,7 @@ OPENSEARCH_PASSWORD = os.getenv('OPENSEARCH_PASSWORD')
 
 class BiomedicalSearch:
     def __init__(self):
-        self.index_name = "biomedical-index"
-        self.ingest_pipeline_id = "nlp-ingest-pipeline"
+        self.index_name = "medical_articles10"
         self.search_pipeline_id = "nlp-search-pipeline"
         
         # Initialize OpenSearch client
@@ -34,7 +30,8 @@ class BiomedicalSearch:
     def get_embedding(self, text: str) -> List[float]:
         """Generate embedding using sentence transformer"""
         try:
-            model = SentenceTransformer('GanjinZero/coder_all')
+            #model = SentenceTransformer('GanjinZero/coder_all')
+            model = SentenceTransformer('BAAI/bge-large-zh-v1.5')
             embeddings_1 = model.encode([text], normalize_embeddings=True)
             return embeddings_1[0].tolist()
             
@@ -82,12 +79,11 @@ class BiomedicalSearch:
             "mappings": {
                 "properties": {
                     "id": {"type": "keyword"},
-                    "keyword1": {"type": "text", "analyzer": "standard"},
-                    "keyword2": {"type": "text", "analyzer": "standard"},
+                    "keywords": {"type": "text", "analyzer": "standard"},
                     "abstract": {"type": "text", "analyzer": "standard"},
                     "abstract_embedding": {
                         "type": "knn_vector",
-                        "dimension": 768,  # Cohere multilingual v3 dimension
+                        "dimension": 1024,
                         "method": {
                             "name": "hnsw",
                             "space_type": "l2",
@@ -116,15 +112,16 @@ class BiomedicalSearch:
         df = pd.read_csv(csv_path)
         
         for _, row in df.iterrows():
-            # For initial ingestion, we'll manually generate embeddings
-            # since the OpenSearch ingest pipeline might not have Bedrock integration
             embedding = self.get_embedding(row['abstract'])
             
             if embedding:
+                keywords = row['keyword1']
+                if pd.notna(row['keyword2']):
+                    keywords += f" {row['keyword2']}"
+                
                 document = {
                     "id": row['id'],
-                    "keyword1": row['keyword1'],
-                    "keyword2": row['keyword2'] if pd.notna(row['keyword2']) else "",
+                    "keywords": keywords,
                     "abstract": row['abstract'],
                     "abstract_embedding": embedding
                 }
@@ -182,8 +179,7 @@ class BiomedicalSearch:
             for hit in response['hits']['hits']:
                 result = {
                     'id': hit['_source']['id'],
-                    'keyword1': hit['_source']['keyword1'],
-                    'keyword2': hit['_source']['keyword2'],
+                    'keywords': hit['_source']['keywords'],
                     'abstract': hit['_source']['abstract'],
                     'score': hit['_score']
                 }
@@ -217,15 +213,15 @@ class BiomedicalSearch:
         try:
             response = self.opensearch.search(
                 index=self.index_name,
-                body=search_query
+                body=search_query,
+                params={"search_pipeline": self.search_pipeline_id}
             )
             
             results = []
             for hit in response['hits']['hits']:
                 result = {
                     'id': hit['_source']['id'],
-                    'keyword1': hit['_source']['keyword1'],
-                    'keyword2': hit['_source']['keyword2'],
+                    'keywords': hit['_source']['keywords'],
                     'abstract': hit['_source']['abstract'],
                     'score': hit['_score']
                 }
@@ -253,15 +249,15 @@ class BiomedicalSearch:
         try:
             response = self.opensearch.search(
                 index=self.index_name,
-                body=search_query
+                body=search_query,
+                params={"search_pipeline": self.search_pipeline_id}
             )
             
             results = []
             for hit in response['hits']['hits']:
                 result = {
                     'id': hit['_source']['id'],
-                    'keyword1': hit['_source']['keyword1'],
-                    'keyword2': hit['_source']['keyword2'],
+                    'keywords': hit['_source']['keywords'],
                     'abstract': hit['_source']['abstract'],
                     'score': hit['_score']
                 }
@@ -286,8 +282,8 @@ def main():
     
     # Example searches
     test_queries = [
-        "非小细胞型肺癌",
-        "小细胞型肺部恶性肿瘤",
+        "重组人黄体生成素",
+        "胚胎移植",
     ]
     
     # Perform different types of searches
@@ -295,23 +291,23 @@ def main():
         print(f"\n{'='*50}")
         print(f"查询词: {query}")
         
-        print("\n1. 混合搜索结果:")
-        hybrid_results = search_system.hybrid_search(query)
-        for i, result in enumerate(hybrid_results, 1):
-            print(f"\n{i}. 文档ID: {result['id']}")
-            print(f"得分: {result['score']}")
-            print(f"摘要: {result['abstract']}")
+        #print("\n1. 混合搜索结果:")
+        #hybrid_results = search_system.hybrid_search(query)
+        #for i, result in enumerate(hybrid_results, 1):
+        #    print(f"\n{i}. 文档ID: {result['id']}")
+        #    print(f"得分: {result['score']}")
+        #    print(f"摘要: {result['abstract']}")
         
-        print("\n2. 纯向量搜索结果:")
+        print("\n2. 纯向量搜��结果:")
         vector_results = search_system.vector_search(query)
         for i, result in enumerate(vector_results, 1):
             print(f"\n{i}. 文档ID: {result['id']}")
             print(f"得分: {result['score']}")
             print(f"摘要: {result['abstract']}")
-        
+        #
         #print("\n3. 纯关键词搜索结果:")
         #keyword_results = search_system.keyword_search(query)
-        #print(keyword_results)
+        ##print(keyword_results)
         #for i, result in enumerate(keyword_results, 1):
         #    print(f"\n{i}. 文档ID: {result['id']}")
         #    #print(f"关键词: {result['keywords']}")
